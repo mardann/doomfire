@@ -1,6 +1,6 @@
 package dev.adambennett.doomcompose
 
-import androidx.ui.graphics.Color
+import androidx.compose.ui.graphics.Color
 
 val fireColors = arrayOf(
     Color(7, 7, 7),

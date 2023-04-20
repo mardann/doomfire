@@ -1,33 +1,42 @@
 package dev.adambennett.doomcompose
 
+import android.util.Log
 import android.view.Choreographer
-import androidx.compose.Composable
-import androidx.compose.Model
-import androidx.compose.remember
-import androidx.ui.core.DrawScope
-import androidx.ui.core.Modifier
-import androidx.ui.foundation.Canvas
-import androidx.ui.geometry.Rect
-import androidx.ui.graphics.Paint
-import androidx.ui.layout.fillMaxSize
-import dev.adambennett.doomcompose.models.CanvasMeasurements
-import dev.adambennett.doomcompose.models.WindDirection
-import dev.adambennett.doomcompose.models.heightPixel
-import dev.adambennett.doomcompose.models.pixelSize
-import dev.adambennett.doomcompose.models.tallerThanWide
-import dev.adambennett.doomcompose.models.widthPixel
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import dev.adambennett.doomcompose.models.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.floor
 import kotlin.random.Random
+import kotlin.math.absoluteValue
+import kotlin.math.max
 
-@Model
 data class DoomState(var pixels: List<Int> = emptyList())
 
 @Composable
 fun DoomCompose(
-    state: DoomState = DoomState()
+    state: DoomState = DoomState(),
+    scope: CoroutineScope = rememberCoroutineScope()
+    
 ) {
-    DoomCanvas(state) { canvas ->
-        setupFireView(canvas, state)
+    var innerState by remember {
+        mutableStateOf(state)
+    }
+    DoomCanvas(innerState) { canvas ->
+        setupFireView(scope, canvas, windDirection = WindDirection.Right, updateDoomState = {
+            innerState = it
+        })
     }
 }
 
@@ -36,13 +45,19 @@ fun DoomCanvas(
     state: DoomState,
     measurements: (CanvasMeasurements) -> Unit
 ) {
+    val innerState: DoomState by remember(state) {
+        mutableStateOf(state)
+    }
+    
     val paint = remember { Paint() }
-    var measured = false
+    var measured by remember {
+        mutableStateOf(false)
+    }
 
     Canvas(modifier = Modifier.fillMaxSize()) {
         val canvasState = CanvasMeasurements(
-            size.width.value.toInt(),
-            size.height.value.toInt()
+            size.width.absoluteValue.toInt(),
+            size.height.absoluteValue.toInt()
         )
 
         if (!measured) {
@@ -50,7 +65,7 @@ fun DoomCanvas(
             measurements(canvasState)
         }
 
-        if (state.pixels.isNotEmpty()) {
+        if (innerState.pixels.isNotEmpty()) {
             renderFire(
                 paint,
                 state.pixels,
@@ -62,52 +77,48 @@ fun DoomCanvas(
     }
 }
 
-private fun DrawScope.renderFire(
+fun DrawScope.renderFire(
     paint: Paint,
     firePixels: List<Int>,
     heightPixels: Int,
     widthPixels: Int,
     pixelSize: Int
-) {
+                        ) {
+    Log.d("DoomCanvas", "renderFire: ")
     for (column in 0 until widthPixels) {
         for (row in 0 until heightPixels - 1) {
+            val currentPixelIndex = column + (widthPixels * row)
+            val currentPixel = firePixels[currentPixelIndex]
+            val color = fireColors[currentPixel]
             drawRect(
-                rect = Rect(
-                    (column * pixelSize).toFloat(),
-                    (row * pixelSize).toFloat(),
-                    ((column + 1) * pixelSize).toFloat(),
-                    ((row + 1) * pixelSize).toFloat()
-                ),
-                paint = paint.apply {
-                    val currentPixelIndex = column + (widthPixels * row)
-                    val currentPixel = firePixels[currentPixelIndex]
-                    color = fireColors[currentPixel]
-                }
-            )
+                color = color,
+                    topLeft = Offset((column * pixelSize).toFloat(),(row * pixelSize).toFloat()),
+                    Size(((column + 1) * pixelSize).toFloat(), ((row + 1) * pixelSize).toFloat())
+                    )
         }
     }
 }
 
 private fun setupFireView(
+    scope: CoroutineScope,
     canvas: CanvasMeasurements,
-    doomState: DoomState,
+    updateDoomState: (DoomState) -> Unit,
     windDirection: WindDirection = WindDirection.Left
 ) {
     val arraySize = canvas.widthPixel * canvas.heightPixel
 
     val pixelArray = IntArray(arraySize) { 0 }
         .apply { createFireSource(this, canvas) }
-
-    val callback = object : Choreographer.FrameCallback {
-        override fun doFrame(frameTimeNanos: Long) {
+    
+    scope.launch {
+        while (true) {
             calculateFirePropagation(pixelArray, canvas, windDirection)
-            doomState.pixels = pixelArray.toList()
-
-            Choreographer.getInstance().postFrameCallback(this)
+            updateDoomState(DoomState(pixelArray.toList()))
+            Log.d("setupFireView", "doFrame: ")
+            delay(60)
         }
     }
-
-    Choreographer.getInstance().postFrameCallback(callback)
+    
 }
 
 private fun createFireSource(firePixels: IntArray, canvas: CanvasMeasurements) {
@@ -115,7 +126,9 @@ private fun createFireSource(firePixels: IntArray, canvas: CanvasMeasurements) {
 
     for (column in 0 until canvas.widthPixel) {
         val pixelIndex = (overFlowFireIndex - canvas.widthPixel) + column
-        firePixels[pixelIndex] = fireColors.size - 1
+        firePixels[pixelIndex] = (fireColors.size - 1).also {
+            Log.d("createFireSource", "createFireSource: pixel index: $pixelIndex, value: $it")
+        }
     }
 }
 
@@ -149,14 +162,12 @@ private fun updateFireIntensityPerPixel(
     val offset = if (measurements.tallerThanWide) 2 else 3
     val decay = floor(Random.nextDouble() * offset).toInt()
     val bellowPixelFireIntensity = firePixels[bellowPixelIndex]
-    val newFireIntensity = when {
-        bellowPixelFireIntensity - decay >= 0 -> bellowPixelFireIntensity - decay
-        else -> 0
-    }
+    
+    val newFireIntensity = max(bellowPixelFireIntensity - decay,0)
 
     val newPosition = when (windDirection) {
-        WindDirection.Right -> if (currentPixelIndex - decay >= 0) currentPixelIndex - decay else currentPixelIndex
-        WindDirection.Left -> if (currentPixelIndex + decay >= 0) currentPixelIndex + decay else currentPixelIndex
+        WindDirection.Right -> max(currentPixelIndex - decay, 0)
+        WindDirection.Left -> max(currentPixelIndex + decay,0)
         WindDirection.None -> currentPixelIndex
     }
 

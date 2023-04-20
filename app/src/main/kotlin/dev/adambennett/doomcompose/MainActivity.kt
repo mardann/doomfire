@@ -1,10 +1,11 @@
 package dev.adambennett.doomcompose
 
 import android.os.Bundle
-import androidx.appcompat.app.AppCompatActivity
-import androidx.ui.core.setContent
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
 
-class MainActivity : AppCompatActivity() {
+
+class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
